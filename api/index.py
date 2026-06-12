@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import traceback
 from datetime import date
 from typing import Any, Dict
 
@@ -9,9 +10,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from bwa_backend import app as blog_app
 
 app = FastAPI(title="Blog Writing Agent API")
 
@@ -49,67 +47,93 @@ class GenerateResponse(BaseModel):
     markdown: str
 
 
-@app.post("/generate", response_model=GenerateResponse)
+@app.post("/generate")
 def generate(req: GenerateRequest):
-    as_of = req.as_of or date.today().isoformat()
+    try:
+        # lazy import so startup errors surface in the response
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        from bwa_backend import app as blog_app
 
-    inputs: Dict[str, Any] = {
-        "topic": req.topic,
-        "mode": "",
-        "needs_research": False,
-        "queries": [],
-        "evidence": [],
-        "plan": None,
-        "as_of": as_of,
-        "recency_days": 7,
-        "sections": [],
-        "merged_md": "",
-        "md_with_placeholders": "",
-        "image_specs": [],
-        "final": "",
-    }
+        as_of = req.as_of or date.today().isoformat()
 
-    out = blog_app.invoke(inputs)
+        inputs: Dict[str, Any] = {
+            "topic": req.topic,
+            "mode": "",
+            "needs_research": False,
+            "queries": [],
+            "evidence": [],
+            "plan": None,
+            "as_of": as_of,
+            "recency_days": 7,
+            "sections": [],
+            "merged_md": "",
+            "md_with_placeholders": "",
+            "image_specs": [],
+            "final": "",
+        }
 
-    plan = out.get("plan")
-    evidence_raw = out.get("evidence") or []
-    evidence = []
-    for e in evidence_raw:
-        if hasattr(e, "model_dump"):
-            evidence.append(e.model_dump())
-        elif isinstance(e, dict):
-            evidence.append(e)
+        out = blog_app.invoke(inputs)
 
-    tasks = []
-    if plan and hasattr(plan, "tasks"):
-        for t in plan.tasks:
-            tasks.append(
-                TaskInfo(
-                    id=t.id,
-                    title=t.title,
-                    goal=t.goal,
-                    target_words=t.target_words,
-                    requires_research=t.requires_research,
-                    requires_citations=t.requires_citations,
-                    requires_code=t.requires_code,
-                    tags=list(t.tags) if hasattr(t, "tags") else [],
+        plan = out.get("plan")
+        evidence_raw = out.get("evidence") or []
+        evidence = []
+        for e in evidence_raw:
+            if hasattr(e, "model_dump"):
+                evidence.append(e.model_dump())
+            elif isinstance(e, dict):
+                evidence.append(e)
+
+        tasks = []
+        if plan and hasattr(plan, "tasks"):
+            for t in plan.tasks:
+                tasks.append(
+                    TaskInfo(
+                        id=t.id,
+                        title=t.title,
+                        goal=t.goal,
+                        target_words=t.target_words,
+                        requires_research=t.requires_research,
+                        requires_citations=t.requires_citations,
+                        requires_code=t.requires_code,
+                        tags=list(t.tags) if hasattr(t, "tags") else [],
+                    )
                 )
-            )
-    elif plan and isinstance(plan, dict):
-        for t in plan.get("tasks", []):
-            tasks.append(TaskInfo(**t))
+        elif plan and isinstance(plan, dict):
+            for t in plan.get("tasks", []):
+                tasks.append(TaskInfo(**t))
 
-    return GenerateResponse(
-        blog_title=plan.blog_title if hasattr(plan, "blog_title") else plan.get("blog_title", ""),
-        mode=out.get("mode", ""),
-        needs_research=out.get("needs_research", False),
-        queries=out.get("queries", []),
-        evidence=evidence,
-        tasks=tasks,
-        markdown=out.get("final", ""),
-    )
+        return GenerateResponse(
+            blog_title=plan.blog_title if hasattr(plan, "blog_title") else plan.get("blog_title", ""),
+            mode=out.get("mode", ""),
+            needs_research=out.get("needs_research", False),
+            queries=out.get("queries", []),
+            evidence=evidence,
+            tasks=tasks,
+            markdown=out.get("final", ""),
+        )
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "traceback": tb},
+        )
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/debug")
+def debug():
+    """Diagnostics endpoint to check environment."""
+    info = {
+        "python_version": sys.version,
+        "cwd": os.getcwd(),
+        "files": sorted(os.listdir(".")),
+        "api_files": sorted(os.listdir("api")) if os.path.isdir("api") else [],
+        "env_keys": [k for k in os.environ if "KEY" in k or "TOKEN" in k or "API" in k],
+        "openai_key_set": bool(os.environ.get("OPENAI_API_KEY")),
+    }
+    return info
