@@ -146,6 +146,8 @@ def render_markdown_with_local_images(md: str):
 
         if src.startswith("http://") or src.startswith("https://"):
             st.image(src, caption=caption or (alt or None), use_container_width=True)
+        elif src.startswith("data:"):
+            st.markdown(f'<img src="{src}" alt="{alt}" style="max-width:100%">{"<br><em>" + caption + "</em>" if caption else ""}', unsafe_allow_html=True)
         else:
             img_path = _resolve_image_path(src)
             if img_path.exists():

@@ -2,7 +2,7 @@
 
 An **AI-powered blog writing agent** built with **LangGraph**, **LangChain**, and **OpenRouter**. It generates full technical blog posts from a single topic prompt through a stateful agent graph pipeline.
 
-Given a topic, it decides whether web research is needed, optionally searches the web, plans a structured outline, writes each section in parallel, and optionally generates diagrams — all producing a final Markdown file.
+Given a topic, it decides whether web research is needed, optionally searches the web, plans a structured outline, writes each section in parallel, and generates diagrams — all producing a final Markdown file.
 
 ---
 
@@ -26,7 +26,7 @@ Topic
      │                   │
      ▼ Yes               │
 ┌──────────┐             │
-│ Research │ ◄── DuckDuckGo search + LLM synthesis
+│ Research │ ◄── Tavily / Google search + LLM synthesis
 └────┬─────┘             │
      └──► Orchestrator   │
                         ▼
@@ -41,7 +41,7 @@ Topic
               │  └──────┬───────┘   │
               │         ▼          │
               │  ┌────────────────┐│
-              │  │generate_images ││ ◄── Gemini image generation
+              │  │generate_images ││ ◄── Pillow local diagram generation
               │  └────────────────┘│
               └─────────────────────┘
                         │
@@ -54,7 +54,7 @@ Topic
 | Node | Description |
 |------|-------------|
 | **Router** | LLM decides if web research is needed (closed_book / hybrid / open_book) and generates search queries |
-| **Research** | Fetches web results via DuckDuckGo (free, no API key), deduplicates, filters by recency |
+| **Research** | Fetches web results via Tavily (if API key set) or Google search, deduplicates, filters by recency |
 | **Orchestrator** | Generates a structured `Plan` with 5-9 task sections, each with goal, bullets, target word count |
 | **Worker** | Each worker writes one Markdown section in parallel using `Send` fanout |
 | **Reducer** | 3-node subgraph: merge sections → decide on image placeholders → generate & place images |
@@ -64,8 +64,8 @@ Topic
 ## Features
 
 - **Three research modes**: closed_book (evergreen), hybrid (some research), open_book (news roundup)
-- **Web research via DuckDuckGo**: completely free, no API key needed
-- **Image generation** (optional): Gemini 2.5 Flash generates diagrams from LLM-specified prompts
+- **Web research via Tavily** (optional API key) or **Google search** (free, no API key)
+- **Image generation** via Pillow: generates clean local diagram images — no API key required
 - **Recency filtering**: automatically filters evidence by date for news/open_book modes
 - **Evidence-grounded writing**: workers cite provided URLs for factual claims
 - **Structured output**: all LLM calls use Pydantic schemas for reliable parsing
@@ -94,8 +94,7 @@ source venv/bin/activate   # Linux/Mac
 # venv\Scripts\activate     # Windows
 
 # Install dependencies
-pip install langgraph langchain-openai langchain-core pydantic python-dotenv \
-            duckduckgo-search streamlit pandas
+pip install -r requirements.txt
 ```
 
 ### API Setup
@@ -110,13 +109,13 @@ The project uses **OpenRouter** as the LLM provider (free tier available, no cre
 OPENAI_API_KEY=sk-or-v1-...
 ```
 
-For **image generation** (optional), add a Google Gemini API key:
+**Optional** — Tavily for higher-quality web search (falls back to free Google search if unset):
 
 ```env
-GOOGLE_API_KEY=AIza...
+TAVILY_API_KEY=tvly-...
 ```
 
-Get one for free at https://aistudio.google.com/app/apikey
+Get one at https://tavily.com
 
 ### Run
 
@@ -157,6 +156,9 @@ Opens at `http://localhost:8501`.
 blog-agent-system/
 ├── bwa_backend.py          # LangGraph agent pipeline (production)
 ├── bwa_frontend.py         # Streamlit UI
+├── api/index.py            # FastAPI serverless handler (Vercel)
+├── public/index.html       # Static frontend (Vercel)
+├── vercel.json             # Vercel deployment config
 ├── 1_bwa_basic.ipynb       # v1: minimal orchestrator→workers
 ├── 2_bwa_improved_prompting.ipynb  # v2: richer prompts + audience/tone
 ├── 3_bwa_research.ipynb    # v3: router + Tavily research
@@ -165,6 +167,8 @@ blog-agent-system/
 ├── tavily_test.ipynb       # Tavily API smoke test
 ├── .env                    # API keys
 ├── images/                 # Generated images
+├── requirements.txt        # Python dependencies
+├── run.sh                  # Convenience startup script
 └── *.md                    # Generated blog files
 ```
 
@@ -193,10 +197,11 @@ blog-agent-system/
 | `langchain-core` | LangChain abstractions (messages, tools) |
 | `pydantic` | Structured data schemas |
 | `python-dotenv` | Environment variable loading |
-| `duckduckgo-search` | Free web search |
+| `tavily-python` | Optional — Tavily web search API |
+| `googlesearch-python` | Free Google search fallback |
+| `Pillow` | Local diagram image generation |
 | `streamlit` | Web UI |
 | `pandas` | DataFrame display in UI |
-| `google-genai` | (Optional) Gemini image generation |
 
 ### Install All at Once
 
@@ -211,11 +216,11 @@ pip install -r requirements.txt
 | Issue | Solution |
 |-------|----------|
 | `404` model not found | Model name changed on OpenRouter. Run `curl -s https://openrouter.ai/api/v1/models \| jq '.data[].id' \| grep gemini` to list available models |
-| No research results | DuckDuckGo may rate-limit; wait and retry. Ensure topic queries are specific |
-| Image generation fails | Check `GOOGLE_API_KEY`. Pipeline degrades gracefully — inserts fallback block |
+| No research results | If no `TAVILY_API_KEY`, Google search fallback is used. Ensure topic queries are specific |
+| Image generation fails | Pillow fallback always works locally — check `images/` directory permissions |
 | `429` rate limit | Wait and retry. Free tiers have per-minute limits |
-| Streamlit won't start | Ensure all deps installed: `pip install streamlit pandas` |
-| Venv not found | Recreate: `python3 -m venv venv && source venv/bin/activate && pip install ...` |
+| Streamlit won't start | Ensure all deps installed: `pip install -r requirements.txt` |
+| Venv not found | Recreate: `python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt` |
 
 ---
 
